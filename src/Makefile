@@ -106,6 +106,25 @@ endif
 LIBOSD		= $(OSD)/lib$(OSD).a
 
 LIBSSL		= -lssl -lcrypto
+ifeq ($(filter true, $(gcrypt) $(GCRYPT)), true)
+	LIBSSL		= -lgcrypt $(LDFLAGS)
+	CFLAGS 		+= -DUSE_GCRYPT
+	OBJS_AC		+= sha1-git.o
+	OBJS_AD		+= sha1-git.o
+	OBJS_PF		+= sha1-git.o
+	OBJS_IV		+= sha1-git.o
+	OBJS_AR		+= sha1-git.o
+	OBJS_ADU	+= sha1-git.o
+	OBJS_AT		+= sha1-git.o
+	OBJS_AB		+= sha1-git.o
+	OBJS_AL		+= sha1-git.o
+	OBJS_WS		+= sha1-git.o
+	OBJS_TT		+= sha1-git.o
+	OBJS_BS		+= sha1-git.o
+else
+	LIBSSL		= -lssl -lcrypto $(LDFLAGS)
+endif
+
 LIBSQL		=
 ifeq ($(SQLITE), true)
 	LIBSQL		= -L/usr/local/lib -lsqlite3
@@ -123,12 +142,9 @@ else
 	endif
 endif
 
-all: osd userland $(SBINFILES)
+all: userland $(SBINFILES)
 
 userland: $(BINFILES)
-
-osd:
-	$(MAKE) -C $(OSD)
 
 $(LIBOSD):
 	$(MAKE) -C $(OSD)
@@ -205,7 +221,7 @@ airdecloak-ng$(EXE): $(OBJS_AU)
 tkiptun-ng$(EXE): $(OBJS_TT) $(LIBOSD)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS_TT) -o $(@) $(LIBS) $(LIBSSL)
 
-wpaclean$(EXE): $(OBJS_WC)
+wpaclean$(EXE): $(OBJS_WC) $(LIBOSD)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS_WC) -o $(@) $(LIBS)
 
 strip: $(BINFILES) $(SBINFILES)
@@ -251,3 +267,9 @@ uninstall:
 check: aircrack-ng$(EXE)
 	./aircrack-ng$(EXE) -w $(TEST_DIR)/password.lst -a 2 -e Harkonen -q $(TEST_DIR)/wpa2.eapol.cap | grep 'KEY FOUND! \[ 12345678 \]' 
 	./aircrack-ng$(EXE) -w $(TEST_DIR)/password.lst -a 2 -e test -q $(TEST_DIR)/wpa.cap | grep 'KEY FOUND! \[ biscotte \]'
+	./aircrack-ng$(EXE) -w $(TEST_DIR)/password.lst -a 2 -e linksys -q $(TEST_DIR)/wpa2-psk-linksys.cap | grep 'KEY FOUND! \[ dictionary \]'
+	./aircrack-ng$(EXE) -w $(TEST_DIR)/password.lst -a 2 -e linksys -q $(TEST_DIR)/wpa-psk-linksys.cap | grep 'KEY FOUND! \[ dictionary \]'
+	$(TEST_DIR)/test-airdecap-ng.sh $(CURDIR)
+ifeq ($(filter true, $(sqlite) $(SQLITE)), true)
+	$(TEST_DIR)/test-airolib-sqlite.sh $(CURDIR)
+endif

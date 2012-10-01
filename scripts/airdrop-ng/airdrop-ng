@@ -17,8 +17,15 @@ import pdb
 #sys.path.extend(["./lib","/usr/lib/airdrop-ng"])
 from time import sleep,localtime
 from airdrop import bcolors, install_dir
-from airdrop import libOuiParse, libDumpParse, lorcon
+from airdrop import libOuiParse, libDumpParse
 from binascii import a2b_hex
+try:
+    import PyLorcon2
+except ImportError, e:
+    print "Did you read the readme? You seem to be missing PyLorcon2"
+    print e
+
+
 class messages:
     """
     handle all printing 
@@ -815,16 +822,21 @@ def lorconTX(pktNum=5,packet=None, channel=1 ,slept=0):
     #pktNum is number each packet is sent
     count = 0
     try:
-        tx.channel=channel #set the channel to send packets on
-    except lorcon.LorconError,e:
-        e,message.printError(["\nError Message from lorcon:",str(e),
+        cchannel = tx.get_channel()
+    except PyLorcon2.Lorcon2Exception ,e:
+        message.printError(["\n Error Message from lorcon:",str(e),
+            "Unable to get channel the wireless card is on"])
+    try:
+        tx.set_channel(channel) #set the channel to send packets on
+    except PyLorcon2.Lorcon2Exception ,e:
+        message.printError(["\nError Message from lorcon:",str(e),
             "Unable to set channel card does not seem to support it",
             "Skipping packet"])
         return False
     while count != pktNum:
         try:
             tx.send_bytes(packet)
-        except lorcon.LorconError,e:
+        except PyLorcon2.Lorcon2Exception ,e:
             message.printMessage(['\nError Message from lorcon:',str(e),
             "Are you sure you are using the correct driver with the -d option?",
             "Or try ifconfig up on the card you provided and its vap."])
@@ -929,13 +941,12 @@ if __name__ == "__main__":
     """
     usage()
     
-    parser = optparse.OptionParser("usage: %prog options [-i,-t,-r] -d -s -p -b -n")  #
+    parser = optparse.OptionParser("usage: %prog options [-i,-t,-r] -s -p -b -n")  #
     parser.add_option("-i", "--interface",  dest="card",nargs=1, 
                 help="Wireless card in monitor mode to inject from")
     parser.add_option("-t", "--dump", dest="data", nargs=1 ,
                 help="Airodump txt file in CSV format NOT the pcap")
     parser.add_option("-r", "--rule",dest="rule", nargs=1 ,help="Rule File for matched deauths")
-    parser.add_option("-u", "--update", dest="OUIupdate", action="store_true", help="Updates OUI list")
     parser.add_option("-s", "--sleep",dest="slept",default=0,nargs=1,type="int",help="Time to sleep between sending each packet")
     parser.add_option("-b", "--debug",dest="debug",action="store_true",default=False,help="Turn on Rule Debugging")
     parser.add_option("-l", "--logging",dest="log",action="store_true",default=False,help="Enable Logging to a file, if file path not provided airdrop will log to default location")
@@ -973,14 +984,6 @@ if __name__ == "__main__":
         "Please 'su' or 'sudo -i' and run again.\n","Exiting...\n\n"])
         sys.exit(-1)
     
-    if options.OUIupdate:
-        libOuiParse.macOUI_lookup(None)
-        sys.exit(0)
-    else:
-        if None in [options.card,options.rule,options.data]:
-            message.printMessage("You are missing either -i, -t, -u or -r.")
-            sys.exit(-1)
-
     #no longer need to import lorcon here instead we should just test opening up the card and check for errors
     liborcon2 = '/usr/local/lib/liborcon2.so'
     if os.path.isfile(liborcon2) is False:
@@ -988,17 +991,20 @@ if __name__ == "__main__":
     
     try:
         try:
-            #open card up for injection
+            """
+            # the following code is marked for removal
+            # more testing is needed
+
             try:
                 liblorcon = lorcon.Lorcon(liborcon2)
             except OSError:
                 message.printMessage(['\n',
                 'Unable to find liborcon2.so in /usr/local/lib or /usr/lib , is lorcon2 installed?'])
                 sys.exit(-1)
-            driver = liblorcon.auto_driver(options.card)
-            tx = liblorcon.create(options.card, driver)
-            tx.open_inject()
-        except lorcon.LorconError,e:
+            """
+            tx = PyLorcon2.Context(options.card)
+            tx.open_injmon()
+        except PyLorcon2.Lorcon2Exception ,e:
             message.printMessage(["\n",
                 e,"Interface %s does not exist" %(options.card)])
             sys.exit(-1)
@@ -1014,8 +1020,9 @@ if __name__ == "__main__":
                 except IOError:
                     ouiLookup = libOuiParse.macOUI_lookup(install_dir + "/support/oui.txt")
             except IOError:
-                message.printError(["oui.txt not found in " + install_dir +"/support","or ./support/"])
-                message.printError("Please run python airdrop-ng -u")
+                for path in libOuiParse.OUIPATH:
+                        message.printError(["oui.txt not found in " + path])
+                message.printError("Please run airodump-ng-oui-update")
                 sys.exit(-1)
 
         except ImportError,e:

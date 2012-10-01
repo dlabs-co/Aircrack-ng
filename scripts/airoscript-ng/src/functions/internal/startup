@@ -22,12 +22,25 @@ _askinterface(){
         askinterface && checkforcemac $startup_mac_set
 }
 
+bsd_interfaces(){
+	for i in $( ifconfig | awk '/flags/ { print $1}'|cut -d: -f1 ); do { ifconfig $i | grep "wlan" &>/dev/null && echo $i ; }  ; done
+}
+
 setinterface(){
+    help_fifo "${mark} ${red}Welcome to airoscript-ng${end}, I'll be your guide from now on\n"\
+        "First, we have to setup a wireless interface to work with.\n" \
+        "Be careful, using this interface with airoscript-ng will disrupt any traffic going trough it." \
+        "If you're using it to connect to the internet, you'll be most likely disconnected "
+
     declare -a INTERFACES
      [[ "$wifi" != "" ]] && [[ "$1" == "start" ]] && [[ "$set_wifi_by_args" == 1 ]] || { 
-        if [ "$1" == "" ] || [ "$1" == "start" ]  ; then
+        if [ "$1" == "" ] || [[ "$1" == 1 ]] || [ "$1" == "start" ]  ; then
         if [ "$show_only_wireless_extensions" == 1 ]; then
-            INTERFACES=(`{ iwconfig|grep -v "no wireless extensions"|grep IEEE|grep -v airoscript|awk '{print $1}';} 2>/dev/null`)
+			[[ -e /bsd ]] && {
+				INTERFACES=( $(bsd_interfaces) )
+			} || {
+				INTERFACES=(`{ iwconfig|grep -v "no wireless extensions"|grep IEEE|grep -v mon|grep -v airoscript|awk '{print $1}';} 2>/dev/null`)
+			}
         else
             INTERFACES=(`ip link|egrep "^[0-9]+"|awk '/: /{gsub(":"," "); print $2}' |grep -v lo`)
         fi
@@ -60,16 +73,10 @@ checkforcemac() {
     else
         export mac=`$MACCHANGER -s $wificard|awk '/Current/ {print $3}'`
         if [ "$FAKE_MAC" != "$mac" ]; then
-            wichchangemac $@;
+            wichchangemac_startup &>/dev/null;
         fi
     fi
 }
-
-special_info(){
-    echo $@>/dev/null # TODO
-
-}
-
 
 guess_idata(){
     AIROUTPUT=$($AIRMON $1 $wificard|grep -v "running"|grep -A 1 $wificard);
@@ -80,6 +87,13 @@ guess_idata(){
     echo $DRIVER $TYPE
     if [[ "$tmpwifi" =~ (.*)[0-9] ]];  then wifi=$tmpwifi; else wifi=$wificard; fi 
 
+}
+
+wichchangemac_startup(){
+    ifconfig $wifi down; $MACCHANGER $wifi --mac $FAKE_MAC; ifconfig $wifi up;
+    ifconfig $iwifi down; $MACCHANGER $iwifi --mac $FAKE_MAC; ifconfig $iwifi up;
+    ifconfig $wificard down; $MACCHANGER $wificard --mac $FAKE_MAC; ifconfig $wificard up
+    return # Disabled =)
 }
 
 wichchangemac(){
@@ -107,16 +121,22 @@ wichchangemac(){
                 [[ $? == 0 ]] && echo -e "${mark}Interface mac set up correctly" || echo -en "${mark}Unable to set interface mac: $?\n $fail"
                 ifconfig $wifi up &>/dev/null; break ;;
 
-            * ) _ "Unknown response. Try again" ;;
+            * ) echo $"Unknown response. Try again" ;;
 
         esac
     done
 }
 
+is_number(){ return $(expr "$1 + 1" &> /dev/null); }
+
 # Wrapper to make interface creation easier.
 selectap_wrapper(){
+    while [ "1" ]; do
         mkmenueline $max r; echo " Rescan targets"; mkmenuline $max
-        single_question "Select Target: "; choice="$ans"
+        special_single_question "Select Target: "; 
+		choice=$ans;
+        is_number $choice && break
+    done
 }
 
 valid_mac(){ (( ${#1} >= 17 )) && return 0 || return 1; }
@@ -149,8 +169,7 @@ selectAp(){
         $(valid_mac "$MAC") && {
             k=$(($k+1))
             if [ "$AUTO" != 2  ]; then
-                [[ "$k" == 1 ]] && ST="TRUE" || ST="FALSE"
-                res+=( "$ST" "$k" " $MAC " "$CHANNEL" "$PRIVACY" "$POWER" "$IDLENGTH" "$ESSID");
+                res+=( "$k" " $MAC " "$CHANNEL" "$PRIVACY" "$POWER" "$IDLENGTH" "$ESSID");
                 mkmenueline $max $k
                 echo -e " $MAC | $CHANNEL | $PRIVACY | $POWER | $IDLENGTH | $ESSID"
             fi
@@ -163,6 +182,7 @@ selectAp(){
     
     if [ "$AUTO" != 2 ]; then selectap_wrapper; fi
     if [ "$choice" != "r" ] ; then
+        [[ ${amac[$choice]} ]] || { echo "Wrong option, scanning for targets again"; autoscan; }
         idlenght=${aidlenght[$choice]}
         ssid=${assid[$choice]}
         channel=${achannel[$choice]}
@@ -183,10 +203,12 @@ selectAp(){
 }
 
 launch_counter(){
+    o=$2; [[ $o == "" ]] && o="targets"
     for i in $( seq 1 $1 ); do
         a=$(( ($i * 100) / $1 ))
-        sleep 1; echo -ne "\r${mark}Scanning for targets: [$a/100 completed]";
+        sleep 1; echo -ne "\r${mark}Scanning for $o: [$a/100 completed]";
     done
+	echo
 }
 
 autoscan(){
@@ -198,45 +220,46 @@ autoscan(){
 }
 
 Scan(){
+    help_fifo "${mark}${red}Scanning${end}\nWe're scanning for near networks \n"\
+        "You'll be asked to select one of them, ${red}they're ordered according to their signal strenght${end}"\
+        "The strongest is the lastest, your network should be near the end" 
     export SCAN=1
     rm -rf $DUMP_PATH/dump* &>/dev/null
-    temporary_switch_clear
-
-    warn "$mark`gettext 'Interface used is'` : $wifi ($iwifi) for $wificard "
-    warn "$mark`gettext 'Interface type is'` : $TYPE ($DRIVER)"
-    export QUIET=1; export NOTITLE=1;
+    markwarn $"Interface used is" ": $wifi ($iwifi) for $wificard "
+    markwarn $"Interface type is" ": $TYPE ($DRIVER)"
+    [[ ! $1 ]] && { export QUIET=1; export NOTITLE=1; }
     execute "" $AIRODUMP --ignore-negative-one -w $DUMP_PATH/dump --encrypt $ENCRYPT -a $wifi
-    temporary_switch_clear
+    wait_for_execute=0
     export SCAN=0
 }
 
 Host_ssidinput(){
-    single_question "Please enter Host SSID"; 
+    single_question $"Please enter Host SSID"; 
     Host_SSID="$ans";
     $clear
 }
 
 setaircrackpaths(){
-	AIRMON="${SBINDIR}airmon-ng"		
-	AIRODUMP="${SBINDIR}airodump-ng"
-	AIREPLAY="${SBINDIR}aireplay-ng --ignore-negative-one"	
-	AIRCRACK="${BINDIR}aircrack-ng"
-	ARPFORGE="${BINDIR}packetforge-ng"
-	WESSIDE="${SBINDIR}wesside-ng"
-	AIRSERV="${SBINDIR}airserv-ng"
-	TKIPTUN="${SBINDIR}tkiptun-ng"
+    AIRMON="${SBINDIR}airmon-ng"        
+    AIRODUMP="${SBINDIR}airodump-ng"
+    AIREPLAY="${SBINDIR}aireplay-ng --ignore-negative-one"  
+    AIRCRACK="${BINDIR}aircrack-ng"
+    ARPFORGE="${BINDIR}packetforge-ng"
+    WESSIDE="${SBINDIR}wesside-ng"
+    AIRSERV="${SBINDIR}airserv-ng"
+    TKIPTUN="${SBINDIR}tkiptun-ng"
     IVSTOOLS="${SBINDIR}ivstools"
     BUDDY="${SBINDIR}buddy-ng"
     EASSIDE="${SBINDIR}easside-ng"
-	MACCHANGER="${BINDIR}macchanger"
+    MACCHANGER="${BINDIR}macchanger"
     AIRGRAPH="${BINDIR}airgraph-ng"
     AIRDECLOAK="${BINDIR}airdecloak-ng"
     KSTATS=$BINDIR"kstats"
-	iwconfig="iwconfig"
+    iwconfig="iwconfig"
 }
 
 confwarn(){
-_ 'Youre going to use a config file on your home or current dir.
+$'Youre going to use a config file on your home or current dir.
 This may be harmfull, for example, if your user have been
 compromised, and youre getting rights trought sudo, someone
 can modify your config file to do something malicious as
@@ -247,10 +270,10 @@ Do you really want to do it (yes/No): '
 }
 
 testmac(){
-	if [ "$TYPE" = "Atherosmadwifi-ng" ]; then
-		FAKE_MAC=`ifconfig $wificard | grep $wifi | awk '{print $5}' | cut -c -17  | sed -e "s/-/:/" | sed -e "s/\-/:/"  | sed -e "s/\-/:/" | sed -e "s/\-/:/" | sed -e "s/\-/:/"`
-		_ "Changed fake_mac :" " $FAKE_MAC"
+    if [ "$TYPE" = "Atherosmadwifi-ng" ]; then
+        FAKE_MAC=`ifconfig $wificard | grep $wifi | awk '{print $5}' | cut -c -17  | sed -e "s/-/:/" | sed -e "s/\-/:/"  | sed -e "s/\-/:/" | sed -e "s/\-/:/" | sed -e "s/\-/:/"`
+        $"Changed fake_mac :" " $FAKE_MAC"
         return
-	fi
-    [[ $auto_fake_mac == 1 ]] && { [[ $set_wifi_by_args != 1 ]] && { warn "${mark}Automatically setting fake mac";  wichchangemac 1 ; }; }
+    fi
+    [[ $auto_fake_mac == 1 ]] && { [[ $set_wifi_by_args != 1 ]] && { markwarn $"Automatically setting fake mac";  wichchangemac 1 ; }; }
 }
